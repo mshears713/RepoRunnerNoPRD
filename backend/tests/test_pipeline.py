@@ -26,7 +26,7 @@ def _create_test_scan(scan_id: str) -> dict:
     return storage.create_scan(
         scan_id,
         {
-            "status": "pending",
+            "status": "queued",
             "repo_url": "https://github.com/testowner/testrepo",
             "repo_owner": "testowner",
             "repo_name": "testrepo",
@@ -34,12 +34,26 @@ def _create_test_scan(scan_id: str) -> dict:
             "fork_repo_name": None,
             "codespace_name": None,
             "preview_url": None,
-            "timeline": {},
+            "timeline": [],
             "execution": None,
             "analysis": None,
             "failure": None,
+            "error": None,
             "cleanup": {"codespace_deleted": False, "fork_deleted": False},
         },
+    )
+
+
+def _step_names(scan: dict) -> list[str]:
+    """Return the list of step names from the timeline (may repeat with different statuses)."""
+    return [s["step"] for s in scan.get("timeline", [])]
+
+
+def _has_step(scan: dict, step: str, status: str) -> bool:
+    """Return True if the timeline contains a step with the given name and status."""
+    return any(
+        s["step"] == step and s["status"] == status
+        for s in scan.get("timeline", [])
     )
 
 
@@ -62,11 +76,30 @@ def test_mock_pipeline_sets_timeline():
     ScanPipeline().run("scan-002")
 
     scan = storage.get_scan("scan-002")
-    timeline = scan.get("timeline", {})
-    assert timeline.get("forked_at")
-    assert timeline.get("codespace_ready_at")
-    assert timeline.get("started_at")
-    assert timeline.get("finished_at")
+    # Timeline is a list of step objects
+    assert isinstance(scan.get("timeline"), list)
+    assert _has_step(scan, "fork", "completed")
+    assert _has_step(scan, "codespace_create", "completed")
+    assert _has_step(scan, "execute", "completed")
+    assert _has_step(scan, "analyze", "completed")
+    assert _has_step(scan, "execution_start", "completed")
+
+
+def test_mock_pipeline_timeline_steps_have_required_fields():
+    """Every timeline entry must have step, status, timestamp, and message."""
+    import storage
+    from pipeline import ScanPipeline
+
+    _create_test_scan("scan-002b")
+    ScanPipeline().run("scan-002b")
+
+    scan = storage.get_scan("scan-002b")
+    for entry in scan.get("timeline", []):
+        assert "step" in entry
+        assert "status" in entry
+        assert "timestamp" in entry
+        assert "message" in entry
+        assert entry["status"] in ("started", "completed", "failed", "in_progress")
 
 
 def test_mock_pipeline_sets_execution():
@@ -137,4 +170,29 @@ def test_mock_pipeline_logs_are_written():
     assert len(logs) > 0
     stages = {log["stage"] for log in logs}
     assert "fork" in stages
-    assert "codespace" in stages
+    assert "codespace_create" in stages
+
+
+def test_mock_pipeline_status_transitions():
+    """status must go through in_progress and end as completed."""
+    import storage
+    from pipeline import ScanPipeline
+
+    _create_test_scan("scan-008")
+    pipeline_instance = ScanPipeline()
+
+    # Capture status mid-run is tricky; check final state
+    pipeline_instance.run("scan-008")
+
+    scan = storage.get_scan("scan-008")
+    assert scan["status"] == "completed"
+    # execution_start started before completed
+    started_idx = next(
+        i for i, s in enumerate(scan["timeline"])
+        if s["step"] == "execution_start" and s["status"] == "started"
+    )
+    completed_idx = next(
+        i for i, s in enumerate(scan["timeline"])
+        if s["step"] == "execution_start" and s["status"] == "completed"
+    )
+    assert started_idx < completed_idx
