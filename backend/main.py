@@ -1,4 +1,5 @@
-import redis.asyncio as aioredis
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,9 +23,9 @@ app.include_router(scan_router, prefix="/api")
 async def health():
     redis_ok = False
     try:
-        r = aioredis.from_url(settings.redis_url, socket_connect_timeout=2)
-        await r.ping()
-        await r.aclose()
+        pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        await pool.ping()
+        await pool.aclose()
         redis_ok = True
     except Exception:
         pass

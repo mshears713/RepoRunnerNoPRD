@@ -62,12 +62,24 @@ class GitHubClient:
 
     def fork_repo(self, owner: str, repo: str) -> str:
         """
-        Fork owner/repo into self._fork_owner.
+        Fork owner/repo into self._fork_owner account.
+        If fork_owner is a GitHub organization, forks into it.
+        If fork_owner is a personal account (or unset), forks into the authenticated user.
         Returns the forked repo's full_name (e.g. 'scanner-bot/repo').
         """
         gh_repo = self._gh.get_repo(f"{owner}/{repo}")
-        fork_owner_user = self._gh.get_user(self._fork_owner)
-        fork = gh_repo.create_fork(organization=self._fork_owner if self._fork_owner else None)
+
+        if self._fork_owner:
+            try:
+                # Try as an organization first
+                org = self._gh.get_organization(self._fork_owner)
+                fork = gh_repo.create_fork(organization=org.login)
+            except GithubException:
+                # Not an org — fork into the authenticated user's account
+                fork = gh_repo.create_fork()
+        else:
+            fork = gh_repo.create_fork()
+
         return fork.full_name
 
     def wait_for_fork(self, fork_full_name: str, timeout: int | None = None) -> bool:
@@ -109,6 +121,19 @@ class GitHubClient:
                     content=content,
                     branch=branch,
                 )
+
+    def get_file_from_fork(self, fork_full_name: str, file_path: str) -> str | None:
+        """
+        Read a file from the fork via the GitHub Contents API.
+        Returns decoded file content as a string, or None if the file doesn't exist yet.
+        This is used to poll for scanner_result.json written by run.sh.
+        """
+        try:
+            fork = self._gh.get_repo(fork_full_name)
+            contents = fork.get_contents(file_path)
+            return base64.b64decode(contents.content).decode("utf-8", errors="replace")
+        except GithubException:
+            return None
 
     def delete_fork(self, fork_full_name: str) -> bool:
         """Delete the forked repo. Returns True on success."""

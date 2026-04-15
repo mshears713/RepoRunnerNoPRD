@@ -157,11 +157,17 @@ class ScanPipeline:
         if not cs_name:
             raise RuntimeError("No codespace_name set")
 
-        _log(scan_id, "execute", "Waiting for run.sh to complete...")
+        fork_name = scan.get("fork_repo_name")
+        _log(scan_id, "execute", "Waiting for run.sh to push results...")
         storage.update_scan(scan_id, **{"timeline.started_at": _now()})
 
         try:
-            execution = fetch_result(self._codespaces, cs_name)
+            execution = fetch_result(
+                github_client=self._github,
+                fork_full_name=fork_name,
+                codespace_client=self._codespaces,
+                codespace_name=cs_name,
+            )
         except Exception as exc:
             execution = {
                 "stage_reached": "cloned",
