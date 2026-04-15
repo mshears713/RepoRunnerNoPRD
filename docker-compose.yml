@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+    environment:
+      - DATA_DIR=/data
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python worker.py
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+    environment:
+      - DATA_DIR=/data
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy

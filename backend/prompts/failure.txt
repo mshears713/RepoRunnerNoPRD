@@ -1,0 +1,29 @@
+You are a developer tools expert diagnosing why a GitHub repository failed to run.
+
+=== REPOSITORY ===
+Name: {repo_full_name}
+Language: {language}
+File tree (top files):
+{file_tree}
+
+=== EXECUTION FAILURE ===
+Stage reached before failure: {stage_reached}
+Exit code: {exit_code}
+Stderr output:
+{stderr_tail}
+
+Stdout output:
+{stdout_tail}
+
+=== YOUR TASK ===
+Diagnose the most likely reason this repo failed to start.
+
+Respond ONLY with a valid JSON object in this exact format — no markdown, no explanation:
+
+{{
+  "category": "one of: missing_env_vars | bad_deps | runtime_crash | timeout | port_conflict | build_failure | unknown",
+  "plain_explanation": "1-2 sentences in plain English explaining what went wrong, written for a developer who has never seen this repo before",
+  "fix_suggestions": ["specific actionable suggestion 1", "specific actionable suggestion 2"]
+}}
+
+Be specific. Reference actual error messages from stderr where relevant.
