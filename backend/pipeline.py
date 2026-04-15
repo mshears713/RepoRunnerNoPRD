@@ -17,7 +17,6 @@ Mock mode (SCANNER_MOCK_MODE=full): all external calls are bypassed with fixture
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -132,7 +131,7 @@ class ScanPipeline:
         try:
             cs = self._codespaces.create_codespace(fork_name)
             cs_name = cs["name"]
-            _log(scan_id, "codespace", f"Codespace '{cs_name}' created, polling for Available state...")
+            _log(scan_id, "codespace", f"Codespace '{cs_name}' created, polling until Available...")
 
             storage.update_scan(scan_id, codespace_name=cs_name)
 

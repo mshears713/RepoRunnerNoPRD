@@ -3,12 +3,9 @@ GitHub REST API client.
 Wraps PyGithub for repo operations and raw httpx for anything PyGithub doesn't cover.
 """
 
-import asyncio
 import base64
 import time
-from typing import Any
 
-import httpx
 from github import Github, GithubException
 
 from config import settings
@@ -34,7 +31,8 @@ class GitHubClient:
         gh_repo = self._gh.get_repo(f"{owner}/{repo}")
         try:
             readme = gh_repo.get_readme()
-            readme_content = base64.b64decode(readme.content).decode("utf-8", errors="replace")[:3000]
+            raw = base64.b64decode(readme.content).decode("utf-8", errors="replace")
+            readme_content = raw[:3000]
         except Exception:
             readme_content = ""
 
