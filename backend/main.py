@@ -33,7 +33,6 @@ app.include_router(scan_router, prefix="/api")
 
 async def _cleanup_loop() -> None:
     while True:
-        await asyncio.sleep(1800)  # run every 30 minutes
         try:
             import storage
             from codespaces_client import CodespacesClient
@@ -48,6 +47,7 @@ async def _cleanup_loop() -> None:
                         logger.info("Cleanup: codespace %s deleted=%s", cs_name, deleted)
         except Exception:
             logger.exception("Error in cleanup loop")
+        await asyncio.sleep(1800)  # run every 30 minutes
 
 
 @app.get("/api/health")
