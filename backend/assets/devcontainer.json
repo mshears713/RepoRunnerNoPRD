@@ -1,0 +1,4 @@
+{
+  "name": "Scanner Environment",
+  "postStartCommand": "bash /workspaces/${localWorkspaceFolderBasename}/scanner/run.sh > /tmp/scanner_run.log 2>&1"
+}
