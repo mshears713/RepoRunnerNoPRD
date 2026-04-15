@@ -4,9 +4,9 @@ Uses TestClient and a temp data directory. No Redis required.
 """
 
 import importlib
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -25,6 +25,7 @@ def client():
     # Patch _run_pipeline so no real background thread is started during tests
     with patch("routes.scan._run_pipeline", new=AsyncMock()):
         import importlib
+
         import main
         importlib.reload(main)
         from main import app

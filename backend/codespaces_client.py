@@ -3,7 +3,6 @@ GitHub Codespaces API client (raw httpx — not covered by PyGithub).
 Handles the full Codespace lifecycle: create → poll → read file → delete.
 """
 
-import asyncio
 import time
 
 import httpx

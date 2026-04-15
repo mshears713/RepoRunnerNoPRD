@@ -16,7 +16,6 @@ import httpx
 
 from config import settings
 
-
 RESULT_FILE_PATH = "scanner_result.json"
 
 
