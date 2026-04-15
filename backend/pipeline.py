@@ -150,7 +150,11 @@ class ScanPipeline:
                 "started",
                 f"Starting fork for {scan['repo_owner']}/{scan['repo_name']}",
             )
-            fork_name = self._github.fork_repo(scan["repo_owner"], scan["repo_name"], scan_id=scan_id)
+            fork_name = self._github.fork_repo(
+                scan["repo_owner"],
+                scan["repo_name"],
+                scan_id=scan_id,
+            )
             _log(scan_id, "fork", "in_progress", f"Fork created: {fork_name}")
 
             ready = self._github.wait_for_fork(fork_name)

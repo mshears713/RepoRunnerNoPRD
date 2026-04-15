@@ -221,6 +221,7 @@ def test_github_client_rejects_invalid_token():
 @patch("github_client.Github")
 def test_github_client_auth_failure_returns_structured_error(mock_gh_class):
     from github import GithubException
+
     from github_client import GitHubClient, GitHubDiagnosticsError
 
     mock_gh_class.return_value.get_user.side_effect = GithubException(401, "bad credentials")

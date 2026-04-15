@@ -237,7 +237,11 @@ class GitHubClient:
                 scan_id=scan_id,
                 details={"repo": repo_name, "user": self._authenticated_user},
                 reason="GitHub fork failed",
-                likely_causes=["missing repo permissions", "private repo access issue", "rate limit"],
+                likely_causes=[
+                    "missing repo permissions",
+                    "private repo access issue",
+                    "rate limit",
+                ],
             )
 
         return fork.full_name
