@@ -1,12 +1,24 @@
-from arq import create_pool
-from arq.connections import RedisSettings
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import settings
 from routes.scan import router as scan_router
 
-app = FastAPI(title="Repo Viability Scanner", version="0.1.0")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the cleanup background task when the server starts."""
+    task = asyncio.create_task(_cleanup_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Repo Viability Scanner", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,14 +31,25 @@ app.add_middleware(
 app.include_router(scan_router, prefix="/api")
 
 
+async def _cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(1800)  # run every 30 minutes
+        try:
+            import storage
+            from codespaces_client import CodespacesClient
+            stale = storage.find_scans_for_cleanup(older_than_seconds=3600)
+            if stale:
+                cs_client = CodespacesClient()
+                for scan in stale:
+                    cs_name = scan.get("codespace_name")
+                    if cs_name:
+                        deleted = cs_client.delete_codespace(cs_name)
+                        storage.update_scan(scan["id"], **{"cleanup.codespace_deleted": deleted})
+                        logger.info("Cleanup: codespace %s deleted=%s", cs_name, deleted)
+        except Exception:
+            logger.exception("Error in cleanup loop")
+
+
 @app.get("/api/health")
-async def health():
-    redis_ok = False
-    try:
-        pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        await pool.ping()
-        await pool.aclose()
-        redis_ok = True
-    except Exception:
-        pass
-    return {"status": "ok", "redis": "ok" if redis_ok else "unavailable"}
+async def health() -> dict:
+    return {"status": "ok"}

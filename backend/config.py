@@ -8,7 +8,6 @@ class Settings(BaseSettings):
     github_fork_owner: str = ""
     gemini_api_key: str = ""
     data_dir: str = "./data"
-    redis_url: str = "redis://localhost:6379"
 
     # Pipeline timeouts (seconds)
     fork_poll_timeout: int = 120
