@@ -118,7 +118,7 @@ class GitHubClient:
         details: dict | None = None,
         reason: str = "GitHub operation failed",
         likely_causes: list[str] | None = None,
-    ):
+    ) -> object:
         self._emit(step_name, "start", "GitHub operation started", details, scan_id=scan_id)
         try:
             result = func()
