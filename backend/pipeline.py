@@ -17,7 +17,6 @@ Mock mode (SCANNER_MOCK_MODE=full): all external calls are bypassed with fixture
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -132,7 +131,7 @@ class ScanPipeline:
         try:
             cs = self._codespaces.create_codespace(fork_name)
             cs_name = cs["name"]
-            _log(scan_id, "codespace", f"Codespace '{cs_name}' created, polling for Available state...")
+            _log(scan_id, "codespace", f"Codespace '{cs_name}' created, polling until Available...")
 
             storage.update_scan(scan_id, codespace_name=cs_name)
 
@@ -157,11 +156,17 @@ class ScanPipeline:
         if not cs_name:
             raise RuntimeError("No codespace_name set")
 
-        _log(scan_id, "execute", "Waiting for run.sh to complete...")
+        fork_name = scan.get("fork_repo_name")
+        _log(scan_id, "execute", "Waiting for run.sh to push results...")
         storage.update_scan(scan_id, **{"timeline.started_at": _now()})
 
         try:
-            execution = fetch_result(self._codespaces, cs_name)
+            execution = fetch_result(
+                github_client=self._github,
+                fork_full_name=fork_name,
+                codespace_client=self._codespaces,
+                codespace_name=cs_name,
+            )
         except Exception as exc:
             execution = {
                 "stage_reached": "cloned",

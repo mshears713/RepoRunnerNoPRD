@@ -1,9 +1,7 @@
 """Tests for GeminiAnalyzer with mocked google-genai API responses."""
 
 import json
-import pytest
-from unittest.mock import MagicMock, patch
-
+from unittest.mock import MagicMock
 
 FIXTURE_SUMMARY = {
     "what_it_does": "A lightweight FastAPI server for embeddings.",
@@ -15,7 +13,10 @@ FIXTURE_SUMMARY = {
 FIXTURE_FAILURE = {
     "category": "missing_env_vars",
     "plain_explanation": "The app failed to start because OPENAI_API_KEY was not set.",
-    "fix_suggestions": ["Set OPENAI_API_KEY in .env", "Check the README for required environment variables"],
+    "fix_suggestions": [
+        "Set OPENAI_API_KEY in .env",
+        "Check the README for required environment variables",
+    ],
 }
 
 

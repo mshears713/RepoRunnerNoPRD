@@ -3,7 +3,6 @@ GitHub Codespaces API client (raw httpx — not covered by PyGithub).
 Handles the full Codespace lifecycle: create → poll → read file → delete.
 """
 
-import asyncio
 import time
 
 import httpx
@@ -90,53 +89,6 @@ class CodespacesClient:
         """
         # The URL pattern for Codespaces port forwarding
         return f"https://{codespace_name}-{port}.app.github.dev"
-
-    # ------------------------------------------------------------------
-    # Read file from Codespace filesystem
-    # ------------------------------------------------------------------
-
-    def read_file_from_codespace(self, codespace_name: str, file_path: str) -> str | None:
-        """
-        Attempt to read a file from inside the Codespace via the content proxy API.
-        Returns file content as string, or None if not accessible.
-
-        Note: This uses the Codespaces content API endpoint. The file_path should be
-        an absolute path inside the Codespace (e.g. '/tmp/scanner_result.json').
-        """
-        with self._client() as c:
-            try:
-                resp = c.get(
-                    f"{_BASE}/user/codespaces/{codespace_name}/content",
-                    params={"path": file_path},
-                    timeout=15,
-                )
-                if resp.status_code == 200:
-                    return resp.text
-            except Exception:
-                pass
-        return None
-
-    def poll_for_result_file(
-        self,
-        codespace_name: str,
-        result_path: str = "/tmp/scanner_result.json",
-        timeout: int | None = None,
-    ) -> str | None:
-        """
-        Poll the Codespace filesystem for the result JSON file written by run.sh.
-        Returns file content when found, or None on timeout.
-        """
-        timeout = timeout or settings.execution_timeout
-        deadline = time.time() + timeout
-        interval = 8
-
-        while time.time() < deadline:
-            content = self.read_file_from_codespace(codespace_name, result_path)
-            if content:
-                return content
-            time.sleep(interval)
-
-        return None
 
     # ------------------------------------------------------------------
     # Delete

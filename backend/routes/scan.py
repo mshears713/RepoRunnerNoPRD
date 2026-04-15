@@ -8,14 +8,11 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from arq import create_pool
-from arq.connections import RedisSettings
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import storage
-from config import settings
 
 router = APIRouter()
 
@@ -40,7 +37,7 @@ class ScanRequest(BaseModel):
         if "github.com" not in parsed.netloc:
             raise ValueError("repo_url must be a github.com URL")
         parts = parsed.path.strip("/").split("/")
-        if len(parts) < 2:
+        if len(parts) < 2 or not parts[1]:
             raise ValueError("repo_url must include owner and repo name")
         return v.rstrip("/")
 
@@ -50,23 +47,27 @@ def _parse_github_url(url: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
+async def _run_pipeline(scan_id: str) -> None:
+    """Run the blocking pipeline in a thread so it doesn't block the event loop."""
+    from pipeline import ScanPipeline
+    await asyncio.to_thread(ScanPipeline().run, scan_id)
+
+
 # ------------------------------------------------------------------
 # POST /api/scan
 # ------------------------------------------------------------------
 
 @router.post("/scan", status_code=201)
-async def submit_scan(body: ScanRequest) -> dict:
+async def submit_scan(body: ScanRequest, background_tasks: BackgroundTasks) -> dict:
     owner, repo = _parse_github_url(body.repo_url)
 
     # Dedup: reject if same repo scanned in the last 24 hours
-    existing = storage.list_scans(limit=500)
     from datetime import timedelta
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    for s in existing:
+    for s in storage.list_scans(limit=500):
         if s.get("repo_owner") == owner and s.get("repo_name") == repo:
-            created = s.get("created_at", "")
             try:
-                ts = datetime.fromisoformat(created)
+                ts = datetime.fromisoformat(s["created_at"])
                 if ts > cutoff:
                     raise HTTPException(
                         status_code=409,
@@ -98,10 +99,7 @@ async def submit_scan(body: ScanRequest) -> dict:
     }
     scan = storage.create_scan(scan_id, scan_data)
 
-    # Enqueue the background job
-    redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    await redis.enqueue_job("run_scan", scan_id)
-    await redis.aclose()
+    background_tasks.add_task(_run_pipeline, scan_id)
 
     return {"id": scan_id, "status": "pending", "created_at": scan["created_at"]}
 
@@ -117,8 +115,8 @@ async def list_scans(
     offset: int = 0,
 ) -> dict:
     scans = storage.list_scans(status=status, limit=limit, offset=offset)
-    all_scans = storage.list_scans(status=status, limit=10000)
-    return {"items": scans, "total": len(all_scans)}
+    total = len(storage.list_scans(status=status, limit=10000))
+    return {"items": scans, "total": total}
 
 
 # ------------------------------------------------------------------
@@ -143,7 +141,7 @@ async def delete_scan(scan_id: str) -> None:
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    # Trigger async cleanup of Codespace/fork if still alive
+    # Best-effort cleanup of live resources
     cs_name = scan.get("codespace_name")
     fork_name = scan.get("fork_repo_name")
     if cs_name and not scan.get("cleanup", {}).get("codespace_deleted"):
@@ -186,8 +184,7 @@ async def _sse_generator(scan_id: str):
     """Yield SSE events until the scan reaches a terminal state."""
     terminal = {"completed", "failed"}
     last_status = None
-    last_timeline = {}
-    poll_interval = 2  # seconds
+    last_timeline: dict = {}
 
     while True:
         scan = storage.get_scan(scan_id)
@@ -214,10 +211,8 @@ async def _sse_generator(scan_id: str):
             else:
                 yield _sse_event("status_update", {"status": status})
 
-        # Keep-alive comment
         yield ": keep-alive\n\n"
-
-        await asyncio.sleep(poll_interval)
+        await asyncio.sleep(2)
 
 
 def _sse_event(event: str, data: dict) -> str:

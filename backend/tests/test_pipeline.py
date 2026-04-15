@@ -4,7 +4,7 @@ Uses SCANNER_MOCK_MODE=full so no external calls are made.
 """
 
 import importlib
-import os
+
 import pytest
 
 

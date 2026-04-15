@@ -16,9 +16,10 @@ from config import settings
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # Failure categories
-FAILURE_CATEGORIES = frozenset(
-    ["missing_env_vars", "bad_deps", "runtime_crash", "timeout", "port_conflict", "build_failure", "unknown"]
-)
+FAILURE_CATEGORIES = frozenset([
+    "missing_env_vars", "bad_deps", "runtime_crash", "timeout",
+    "port_conflict", "build_failure", "unknown",
+])
 
 
 class GeminiAnalyzer:

@@ -1,13 +1,12 @@
 """
 Integration tests for the FastAPI API layer.
-Uses TestClient and a temp data directory.
-ARQ job enqueueing is mocked so no real Redis is needed.
+Uses TestClient and a temp data directory. No Redis required.
 """
 
 import importlib
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -15,7 +14,6 @@ from fastapi.testclient import TestClient
 def tmp_data_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SCANNER_MOCK_MODE", "full")
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
     import config
     importlib.reload(config)
     import storage
@@ -24,13 +22,10 @@ def tmp_data_env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client():
-    with patch("routes.scan.create_pool") as mock_pool:
-        mock_redis = AsyncMock()
-        mock_redis.enqueue_job = AsyncMock()
-        mock_redis.aclose = AsyncMock()
-        mock_pool.return_value = mock_redis
-
+    # Patch _run_pipeline so no real background thread is started during tests
+    with patch("routes.scan._run_pipeline", new=AsyncMock()):
         import importlib
+
         import main
         importlib.reload(main)
         from main import app
@@ -82,7 +77,6 @@ def test_submit_scan_url_missing_repo(client):
 
 
 def test_get_scan(client):
-    # Submit first
     resp = client.post("/api/scan", json={"repo_url": "https://github.com/foo/bar"})
     scan_id = resp.json()["id"]
 

@@ -1,8 +1,5 @@
 """Tests for GitHubClient using respx to mock all HTTP calls."""
 
-import pytest
-import respx
-import httpx
 from unittest.mock import MagicMock, patch
 
 # We test the raw httpx portions; PyGithub portions use mock objects
@@ -89,6 +86,7 @@ def test_wait_for_fork_success(mock_gh_class):
 @patch("github_client.Github")
 def test_wait_for_fork_timeout(mock_gh_class):
     from github import GithubException
+
     from github_client import GitHubClient
 
     mock_gh_class.return_value.get_repo.side_effect = GithubException(404, "not found")
@@ -113,6 +111,7 @@ def test_delete_fork(mock_gh_class):
 @patch("github_client.Github")
 def test_commit_files_to_fork_creates_new_file(mock_gh_class):
     from github import GithubException
+
     from github_client import GitHubClient
 
     mock_fork = MagicMock()
@@ -124,3 +123,83 @@ def test_commit_files_to_fork_creates_new_file(mock_gh_class):
     client.commit_files_to_fork("bot/repo", {"scanner/run.sh": "#!/bin/bash\necho hi"})
 
     mock_fork.create_file.assert_called_once()
+
+
+@patch("github_client.Github")
+def test_get_file_from_fork_returns_content(mock_gh_class):
+    import base64
+
+    from github_client import GitHubClient
+
+    mock_fork = MagicMock()
+    mock_contents = MagicMock()
+    mock_contents.content = base64.b64encode(b'{"stage_reached": "started"}').decode()
+    mock_fork.get_contents.return_value = mock_contents
+    mock_gh_class.return_value.get_repo.return_value = mock_fork
+
+    client = GitHubClient(token="fake", fork_owner="bot")
+    result = client.get_file_from_fork("bot/repo", "scanner_result.json")
+
+    assert result is not None
+    assert "stage_reached" in result
+
+
+@patch("github_client.Github")
+def test_get_file_from_fork_returns_none_when_missing(mock_gh_class):
+    from github import GithubException
+
+    from github_client import GitHubClient
+
+    mock_fork = MagicMock()
+    mock_fork.get_contents.side_effect = GithubException(404, "not found")
+    mock_gh_class.return_value.get_repo.return_value = mock_fork
+
+    client = GitHubClient(token="fake", fork_owner="bot")
+    result = client.get_file_from_fork("bot/repo", "scanner_result.json")
+
+    assert result is None
+
+
+@patch("github_client.Github")
+def test_fork_repo_tries_org_first(mock_gh_class):
+    """fork_repo should attempt to get an organization and fork into it."""
+    from github_client import GitHubClient
+
+    mock_repo = make_mock_repo()
+    fork = MagicMock()
+    fork.full_name = "my-org/repo"
+    mock_repo.create_fork.return_value = fork
+
+    mock_org = MagicMock()
+    mock_org.login = "my-org"
+    mock_gh_class.return_value.get_repo.return_value = mock_repo
+    mock_gh_class.return_value.get_organization.return_value = mock_org
+
+    client = GitHubClient(token="fake", fork_owner="my-org")
+    result = client.fork_repo("upstream", "repo")
+
+    assert result == "my-org/repo"
+    mock_repo.create_fork.assert_called_once_with(organization="my-org")
+
+
+@patch("github_client.Github")
+def test_fork_repo_falls_back_to_personal_account(mock_gh_class):
+    """fork_repo should fall back to personal fork when org lookup fails."""
+    from github import GithubException
+
+    from github_client import GitHubClient
+
+    mock_repo = make_mock_repo()
+    fork = MagicMock()
+    fork.full_name = "myuser/repo"
+    mock_repo.create_fork.return_value = fork
+
+    mock_gh_class.return_value.get_repo.return_value = mock_repo
+    mock_gh_class.return_value.get_organization.side_effect = GithubException(404, "not found")
+
+    client = GitHubClient(token="fake", fork_owner="myuser")
+    result = client.fork_repo("upstream", "repo")
+
+    assert result == "myuser/repo"
+    # Should have been called with no organization arg
+    mock_repo.create_fork.assert_called_once_with()

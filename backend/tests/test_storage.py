@@ -1,9 +1,6 @@
 """Tests for the JSON file storage layer."""
 
-import json
-import os
 import pytest
-from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -12,6 +9,7 @@ def tmp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     # Re-import settings so the env var is picked up
     import importlib
+
     import config
     importlib.reload(config)
     import storage
