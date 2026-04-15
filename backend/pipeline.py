@@ -145,15 +145,20 @@ class ScanPipeline:
             storage.update_scan(scan_id, fork_repo_name=fork_name)
             _step(scan_id, "fork", "completed", f"Fork ready: {fork_name}")
         except Exception as exc:
-            error_msg = f"Fork stage: {exc}"
-            _step(scan_id, "fork", "failed", error_msg)
+            import traceback
+
+            error_message = str(exc) or repr(exc)
+            stack_trace = traceback.format_exc()
+            logger.error("[%s] fork failed: %s", scan_id, error_message)
+            logger.error(stack_trace)
+            _step(scan_id, "fork", "failed", f"Fork stage: {error_message}")
             storage.update_scan(
                 scan_id,
                 status="failed",
-                error=error_msg,
-                failure={"step": "fork", "reason": str(exc), "raw_error": repr(exc)},
+                error=f"Fork failed: {error_message}",
+                failure={"step": "fork", "reason": error_message, "raw_error": stack_trace},
             )
-            raise _PipelineError(error_msg) from exc
+            raise _PipelineError(f"Fork failed: {error_message}") from exc
 
     # ------------------------------------------------------------------
     # Stage 2: Codespace
