@@ -154,8 +154,8 @@ if [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; th
 
   if [ -f "requirements.txt" ]; then
     log "Installing requirements.txt..."
-    pip install -r requirements.txt -q 2>&1 | tail -5 && STAGE_REACHED="installed" || {
-      STDERR_TAIL=$(pip install -r requirements.txt 2>&1 | tail -50)
+    pip install -r requirements.txt -q 2>&1 | tee /tmp/pip_install.log | tail -5 && STAGE_REACHED="installed" || {
+      STDERR_TAIL=$(tail -50 /tmp/pip_install.log)
       write_result "cloned" 1
       exit 0
     }
