@@ -133,6 +133,40 @@ def get_logs(scan_id: str) -> list[dict]:
     return lines
 
 
+def add_timeline_step(
+    scan_id: str,
+    step: str,
+    status: str,
+    message: str | None = None,
+    details: dict | None = None,
+) -> dict:
+    """
+    Append a structured step entry to the scan's timeline list.
+
+    status is one of: "started" | "completed" | "failed"
+    """
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise FileNotFoundError(f"Scan {scan_id} not found")
+
+    entry: dict[str, Any] = {
+        "step": step,
+        "status": status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if message is not None:
+        entry["message"] = message
+    if details is not None:
+        entry["details"] = details
+
+    timeline = scan.get("timeline")
+    if not isinstance(timeline, list):
+        timeline = []
+    timeline.append(entry)
+
+    return update_scan(scan_id, timeline=timeline)
+
+
 def find_scans_for_cleanup(older_than_seconds: int = 3600) -> list[dict]:
     """Return completed scans where codespace hasn't been deleted yet."""
     from datetime import timedelta

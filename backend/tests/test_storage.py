@@ -135,3 +135,35 @@ def test_append_and_get_logs():
 def test_get_logs_missing_scan_returns_empty():
     s = _storage()
     assert s.get_logs("nobody") == []
+
+
+def test_add_timeline_step_appends_entry():
+    s = _storage()
+    s.create_scan("tl1", {"status": "queued", "timeline": []})
+    s.add_timeline_step("tl1", "received_request", "completed", "Request received")
+    s.add_timeline_step("tl1", "parse_repo_url", "completed", "owner=foo repo=bar")
+
+    scan = s.get_scan("tl1")
+    timeline = scan["timeline"]
+    assert isinstance(timeline, list)
+    assert len(timeline) == 2
+    assert timeline[0]["step"] == "received_request"
+    assert timeline[0]["status"] == "completed"
+    assert timeline[0]["message"] == "Request received"
+    assert "timestamp" in timeline[0]
+    assert timeline[1]["step"] == "parse_repo_url"
+
+
+def test_add_timeline_step_missing_scan_raises():
+    s = _storage()
+    with pytest.raises(FileNotFoundError):
+        s.add_timeline_step("ghost", "some_step", "started", "msg")
+
+
+def test_add_timeline_step_optional_details():
+    s = _storage()
+    s.create_scan("tl2", {"status": "queued", "timeline": []})
+    s.add_timeline_step("tl2", "fork", "started", "Forking", details={"owner": "foo"})
+
+    scan = s.get_scan("tl2")
+    assert scan["timeline"][0]["details"] == {"owner": "foo"}

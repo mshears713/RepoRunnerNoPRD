@@ -44,7 +44,7 @@ def test_submit_scan_minimal(client):
     assert resp.status_code == 201
     data = resp.json()
     assert "id" in data
-    assert data["status"] == "pending"
+    assert data["status"] == "queued"
 
 
 def test_submit_scan_enriched(client):
@@ -108,10 +108,10 @@ def test_list_scans(client):
 def test_list_scans_status_filter(client):
     client.post("/api/scan", json={"repo_url": "https://github.com/c/repo3"})
 
-    resp = client.get("/api/scan?status=pending")
+    resp = client.get("/api/scan?status=queued")
     assert resp.status_code == 200
     items = resp.json()["items"]
-    assert all(s["status"] == "pending" for s in items)
+    assert all(s["status"] == "queued" for s in items)
 
 
 def test_delete_scan(client):

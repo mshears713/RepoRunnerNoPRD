@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -15,6 +16,7 @@ from pydantic import BaseModel, field_validator
 import storage
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -45,6 +47,12 @@ class ScanRequest(BaseModel):
 def _parse_github_url(url: str) -> tuple[str, str]:
     parts = urlparse(url).path.strip("/").split("/")
     return parts[0], parts[1]
+
+
+def _tl(scan_id: str, step: str, status: str, message: str) -> None:
+    """Add a timeline step and emit a structured log line."""
+    storage.add_timeline_step(scan_id, step, status, message)
+    logger.info("[%s] [%s] [%s] %s", scan_id, step, status, message)
 
 
 async def _run_pipeline(scan_id: str) -> None:
@@ -78,7 +86,7 @@ async def submit_scan(body: ScanRequest, background_tasks: BackgroundTasks) -> d
 
     scan_id = str(uuid.uuid4())
     scan_data = {
-        "status": "pending",
+        "status": "queued",
         "repo_url": body.repo_url,
         "repo_owner": owner,
         "repo_name": repo,
@@ -91,17 +99,24 @@ async def submit_scan(body: ScanRequest, background_tasks: BackgroundTasks) -> d
         "fork_repo_name": None,
         "codespace_name": None,
         "preview_url": None,
-        "timeline": {},
+        "timeline": [],
         "execution": None,
         "analysis": None,
         "failure": None,
+        "error": None,
         "cleanup": {"codespace_deleted": False, "fork_deleted": False},
     }
-    scan = storage.create_scan(scan_id, scan_data)
+    storage.create_scan(scan_id, scan_data)
 
+    # Immediately record observable pre-pipeline steps so timeline is never empty
+    _tl(scan_id, "received_request", "completed", f"Scan request received for {owner}/{repo}")
+    _tl(scan_id, "parse_repo_url", "completed", f"Extracted owner={owner} repo={repo}")
+    _tl(scan_id, "validate_repo_url", "completed", f"URL validated: {body.repo_url}")
+
+    scan = storage.get_scan(scan_id)
     background_tasks.add_task(_run_pipeline, scan_id)
 
-    return {"id": scan_id, "status": "pending", "created_at": scan["created_at"]}
+    return {"id": scan_id, "status": "queued", "created_at": scan["created_at"]}
 
 
 # ------------------------------------------------------------------
@@ -184,7 +199,7 @@ async def _sse_generator(scan_id: str):
     """Yield SSE events until the scan reaches a terminal state."""
     terminal = {"completed", "failed"}
     last_status = None
-    last_timeline: dict = {}
+    emitted_steps = 0  # index into the timeline list up to which we've emitted
 
     while True:
         scan = storage.get_scan(scan_id)
@@ -193,13 +208,14 @@ async def _sse_generator(scan_id: str):
             return
 
         status = scan.get("status")
-        timeline = scan.get("timeline", {})
+        timeline = scan.get("timeline", [])
+        if not isinstance(timeline, list):
+            timeline = []
 
-        # Emit stage_update events for newly completed timeline milestones
-        for key, ts in timeline.items():
-            if ts and last_timeline.get(key) != ts:
-                yield _sse_event("stage_update", {"stage": key, "timestamp": ts})
-                last_timeline[key] = ts
+        # Emit stage_update events for newly appended timeline steps
+        for step_entry in timeline[emitted_steps:]:
+            yield _sse_event("stage_update", step_entry)
+        emitted_steps = len(timeline)
 
         # Emit status change events
         if status != last_status:

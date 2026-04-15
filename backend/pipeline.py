@@ -8,9 +8,10 @@ Stages:
   4. ANALYZE       — Gemini summary + failure diagnosis; cleanup
 
 Each stage:
-  - Updates the scan JSON via storage.update_scan()
+  - Adds structured timeline steps via storage.add_timeline_step()
   - Appends log lines via storage.append_log()
-  - On failure, sets status=failed and records error; does not re-raise
+  - Emits structured logs: [SCAN_ID] [STEP_NAME] [STATUS] message
+  - On failure: sets status=failed, error (non-empty), and failure object; re-raises
 
 Mock mode (SCANNER_MOCK_MODE=full): all external calls are bypassed with fixture data.
 """
@@ -35,9 +36,25 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _log(scan_id: str, stage: str, message: str, stream: str = "system") -> None:
-    storage.append_log(scan_id, stage, stream, message)
-    logger.info("[%s][%s] %s", scan_id, stage, message)
+def _step(scan_id: str, step: str, status: str, message: str) -> None:
+    """Record a timeline step, append a log entry, and emit a structured log line."""
+    storage.add_timeline_step(scan_id, step, status, message)
+    storage.append_log(scan_id, step, "system", f"[{status}] {message}")
+    logger.info("[%s] [%s] [%s] %s", scan_id, step, status, message)
+
+
+def _log(scan_id: str, step: str, status: str, message: str, stream: str = "system") -> None:
+    """Append a raw log line (no timeline entry) and emit a structured log."""
+    storage.append_log(scan_id, step, stream, message)
+    logger.info("[%s] [%s] [%s] %s", scan_id, step, status, message)
+
+
+class _PipelineError(RuntimeError):
+    """
+    Raised by pipeline stages after they have already recorded failure in storage.
+    Caught by ScanPipeline.run() to mark execution_start as failed without
+    double-writing status/error/failure.
+    """
 
 
 class ScanPipeline:
@@ -69,10 +86,11 @@ class ScanPipeline:
     def run(self, scan_id: str) -> None:
         scan = storage.get_scan(scan_id)
         if scan is None:
-            logger.error("Scan %s not found", scan_id)
+            logger.error("[%s] [pipeline_start] [failed] Scan not found", scan_id)
             return
 
-        storage.update_scan(scan_id, status="running")
+        storage.update_scan(scan_id, status="in_progress")
+        _step(scan_id, "execution_start", "started", "Pipeline execution starting")
 
         if settings.scanner_mock_mode == "full":
             self._run_mocked(scan_id, scan)
@@ -86,37 +104,56 @@ class ScanPipeline:
             self._stage_execute(scan_id, scan)
             scan = storage.get_scan(scan_id)
             self._stage_analyze(scan_id, scan)
+        except _PipelineError as exc:
+            # Stage already set status/error/failure — just close the execution_start step
+            _step(scan_id, "execution_start", "failed", str(exc))
         except Exception as exc:
-            logger.exception("Unhandled error in pipeline for scan %s", scan_id)
-            storage.update_scan(scan_id, status="failed", error=str(exc))
+            # Unhandled exception that bypassed stage-level handling
+            error_msg = str(exc) or "Unhandled pipeline error"
+            logger.exception("[%s] [execution_start] [failed] %s", scan_id, error_msg)
+            _step(scan_id, "execution_start", "failed", error_msg)
+            storage.update_scan(
+                scan_id,
+                status="failed",
+                error=error_msg,
+                failure={
+                    "step": "unknown",
+                    "reason": error_msg,
+                    "raw_error": repr(exc),
+                },
+            )
+        else:
+            _step(scan_id, "execution_start", "completed", "Pipeline completed successfully")
 
     # ------------------------------------------------------------------
     # Stage 1: Fork
     # ------------------------------------------------------------------
 
     def _stage_fork(self, scan_id: str, scan: dict) -> None:
-        _log(scan_id, "fork", f"Forking {scan['repo_owner']}/{scan['repo_name']}...")
+        _step(scan_id, "fork", "started", f"Forking {scan['repo_owner']}/{scan['repo_name']}")
         try:
             fork_name = self._github.fork_repo(scan["repo_owner"], scan["repo_name"])
-            _log(scan_id, "fork", f"Fork created: {fork_name}")
+            _log(scan_id, "fork", "in_progress", f"Fork created: {fork_name}")
 
             ready = self._github.wait_for_fork(fork_name)
             if not ready:
                 raise RuntimeError("Fork did not become ready within timeout")
 
-            _log(scan_id, "fork", "Committing devcontainer and run.sh...")
+            _log(scan_id, "fork", "in_progress", "Committing devcontainer and run.sh")
             prepare_fork(self._github, fork_name, scan["repo_name"])
 
+            storage.update_scan(scan_id, fork_repo_name=fork_name)
+            _step(scan_id, "fork", "completed", f"Fork ready: {fork_name}")
+        except Exception as exc:
+            error_msg = f"Fork stage: {exc}"
+            _step(scan_id, "fork", "failed", error_msg)
             storage.update_scan(
                 scan_id,
-                fork_repo_name=fork_name,
-                **{"timeline.forked_at": _now()},
+                status="failed",
+                error=error_msg,
+                failure={"step": "fork", "reason": str(exc), "raw_error": repr(exc)},
             )
-            _log(scan_id, "fork", "Fork stage complete.")
-        except Exception as exc:
-            _log(scan_id, "fork", f"Fork failed: {exc}", stream="stderr")
-            storage.update_scan(scan_id, status="failed", error=f"Fork stage: {exc}")
-            raise
+            raise _PipelineError(error_msg) from exc
 
     # ------------------------------------------------------------------
     # Stage 2: Codespace
@@ -125,27 +162,29 @@ class ScanPipeline:
     def _stage_codespace(self, scan_id: str, scan: dict) -> None:
         fork_name = scan.get("fork_repo_name")
         if not fork_name:
-            raise RuntimeError("No fork_repo_name set — fork stage may have failed")
+            raise _PipelineError("No fork_repo_name set — fork stage may have failed")
 
-        _log(scan_id, "codespace", f"Creating Codespace for {fork_name}...")
+        _step(scan_id, "codespace_create", "started", f"Creating Codespace for {fork_name}")
         try:
             cs = self._codespaces.create_codespace(fork_name)
             cs_name = cs["name"]
-            _log(scan_id, "codespace", f"Codespace '{cs_name}' created, polling until Available...")
+            msg = f"Codespace '{cs_name}' created, polling until Available"
+            _log(scan_id, "codespace_create", "in_progress", msg)
 
             storage.update_scan(scan_id, codespace_name=cs_name)
 
-            cs = self._codespaces.poll_until_available(cs_name)
-            _log(scan_id, "codespace", "Codespace is Available.")
-
+            self._codespaces.poll_until_available(cs_name)
+            _step(scan_id, "codespace_create", "completed", f"Codespace '{cs_name}' is Available")
+        except Exception as exc:
+            error_msg = f"Codespace stage: {exc}"
+            _step(scan_id, "codespace_create", "failed", error_msg)
             storage.update_scan(
                 scan_id,
-                **{"timeline.codespace_ready_at": _now()},
+                status="failed",
+                error=error_msg,
+                failure={"step": "codespace_create", "reason": str(exc), "raw_error": repr(exc)},
             )
-        except Exception as exc:
-            _log(scan_id, "codespace", f"Codespace stage failed: {exc}", stream="stderr")
-            storage.update_scan(scan_id, status="failed", error=f"Codespace stage: {exc}")
-            raise
+            raise _PipelineError(error_msg) from exc
 
     # ------------------------------------------------------------------
     # Stage 3: Execute
@@ -153,12 +192,9 @@ class ScanPipeline:
 
     def _stage_execute(self, scan_id: str, scan: dict) -> None:
         cs_name = scan.get("codespace_name")
-        if not cs_name:
-            raise RuntimeError("No codespace_name set")
-
         fork_name = scan.get("fork_repo_name")
-        _log(scan_id, "execute", "Waiting for run.sh to push results...")
-        storage.update_scan(scan_id, **{"timeline.started_at": _now()})
+
+        _step(scan_id, "execute", "started", "Waiting for run.sh to push results")
 
         try:
             execution = fetch_result(
@@ -168,6 +204,7 @@ class ScanPipeline:
                 codespace_name=cs_name,
             )
         except Exception as exc:
+            _log(scan_id, "execute", "failed", f"fetch_result raised: {exc}", stream="stderr")
             execution = {
                 "stage_reached": "cloned",
                 "port": None,
@@ -183,16 +220,14 @@ class ScanPipeline:
         if execution.get("stage_reached") == "started" and execution.get("port"):
             preview_url = self._codespaces.get_forwarded_port_url(cs_name, execution["port"])
 
-        storage.update_scan(
-            scan_id,
-            execution=execution,
-            preview_url=preview_url,
-            **{"timeline.finished_at": _now()},
-        )
-        _log(
-            scan_id, "execute",
-            f"Execution complete. stage_reached={execution.get('stage_reached')}, "
-            f"exit_code={execution.get('exit_code')}",
+        storage.update_scan(scan_id, execution=execution, preview_url=preview_url)
+
+        stage_reached = execution.get("stage_reached")
+        exit_code = execution.get("exit_code")
+        exec_status = "completed" if stage_reached == "started" else "failed"
+        _step(
+            scan_id, "execute", exec_status,
+            f"stage_reached={stage_reached} exit_code={exit_code}",
         )
 
         # Log stdout/stderr tails
@@ -206,14 +241,13 @@ class ScanPipeline:
     # ------------------------------------------------------------------
 
     def _stage_analyze(self, scan_id: str, scan: dict) -> None:
-        _log(scan_id, "analyze", "Running AI analysis...")
+        _step(scan_id, "analyze", "started", "Running AI analysis")
         try:
             repo_metadata = self._github.get_repo_metadata(
                 scan["repo_owner"], scan["repo_name"]
             )
             file_tree = self._github.get_file_tree(scan["repo_owner"], scan["repo_name"])
-            # Re-fetch scan to get execution data
-            scan = storage.get_scan(scan_id)
+            scan = storage.get_scan(scan_id)  # re-fetch to get execution data
             ai_result = analyze(scan, repo_metadata, file_tree)
 
             storage.update_scan(
@@ -222,11 +256,12 @@ class ScanPipeline:
                 analysis=ai_result.get("analysis"),
                 failure=ai_result.get("failure"),
             )
-            _log(scan_id, "analyze", "Analysis complete.")
+            _step(scan_id, "analyze", "completed", "Analysis complete")
         except Exception as exc:
-            _log(scan_id, "analyze", f"Analysis failed (non-fatal): {exc}", stream="stderr")
-            # Analysis failure should not mark the whole scan as failed
-            storage.update_scan(scan_id, status="completed", analysis=None, failure=None)
+            _log(scan_id, "analyze", "failed", f"Analysis failed (non-fatal): {exc}", "stderr")
+            # Analysis failure does not fail the whole scan
+            storage.update_scan(scan_id, status="completed", analysis=None)
+            _step(scan_id, "analyze", "failed", f"Analysis skipped: {exc}")
         finally:
             self._cleanup(scan_id)
 
@@ -243,12 +278,12 @@ class ScanPipeline:
         fork_name = scan.get("fork_repo_name")
 
         if cs_name and not scan.get("cleanup", {}).get("codespace_deleted"):
-            _log(scan_id, "analyze", f"Deleting Codespace {cs_name}...")
+            _log(scan_id, "cleanup", "in_progress", f"Deleting Codespace {cs_name}")
             deleted = self._codespaces.delete_codespace(cs_name)
             storage.update_scan(scan_id, **{"cleanup.codespace_deleted": deleted})
 
         if fork_name and not scan.get("cleanup", {}).get("fork_deleted"):
-            _log(scan_id, "analyze", f"Deleting fork {fork_name}...")
+            _log(scan_id, "cleanup", "in_progress", f"Deleting fork {fork_name}")
             deleted = self._github.delete_fork(fork_name)
             storage.update_scan(scan_id, **{"cleanup.fork_deleted": deleted})
 
@@ -260,24 +295,21 @@ class ScanPipeline:
         """Run a simulated pipeline with fixture data. Used in tests and CI."""
         import time
 
-        _log(scan_id, "fork", "[MOCK] Forking repo...")
-        time.sleep(0.1)
-        storage.update_scan(
-            scan_id,
-            fork_repo_name=f"mock-owner/{scan['repo_name']}",
-            **{"timeline.forked_at": _now()},
-        )
+        repo_name = scan["repo_name"]
 
-        _log(scan_id, "codespace", "[MOCK] Creating Codespace...")
-        time.sleep(0.1)
-        storage.update_scan(
-            scan_id,
-            codespace_name="mock-codespace-abc123",
-            **{"timeline.codespace_ready_at": _now()},
-        )
+        _step(scan_id, "fork", "started", "[MOCK] Forking repo")
+        time.sleep(0.05)
+        fork_name = f"mock-owner/{repo_name}"
+        storage.update_scan(scan_id, fork_repo_name=fork_name)
+        _step(scan_id, "fork", "completed", f"[MOCK] Fork ready: {fork_name}")
 
-        _log(scan_id, "execute", "[MOCK] Executing...")
-        time.sleep(0.1)
+        _step(scan_id, "codespace_create", "started", "[MOCK] Creating Codespace")
+        time.sleep(0.05)
+        storage.update_scan(scan_id, codespace_name="mock-codespace-abc123")
+        _step(scan_id, "codespace_create", "completed", "[MOCK] Codespace is Available")
+
+        _step(scan_id, "execute", "started", "[MOCK] Executing run.sh")
+        time.sleep(0.05)
         mock_execution = {
             "stage_reached": "started",
             "port": 8000,
@@ -291,11 +323,11 @@ class ScanPipeline:
             scan_id,
             execution=mock_execution,
             preview_url="https://mock-codespace-abc123-8000.app.github.dev",
-            **{"timeline.started_at": _now(), "timeline.finished_at": _now()},
         )
+        _step(scan_id, "execute", "completed", "[MOCK] stage_reached=started exit_code=0")
 
-        _log(scan_id, "analyze", "[MOCK] Analyzing...")
-        time.sleep(0.1)
+        _step(scan_id, "analyze", "started", "[MOCK] Running AI analysis")
+        time.sleep(0.05)
         storage.update_scan(
             scan_id,
             status="completed",
@@ -308,4 +340,5 @@ class ScanPipeline:
             failure=None,
             **{"cleanup.codespace_deleted": True, "cleanup.fork_deleted": True},
         )
-        _log(scan_id, "analyze", "[MOCK] Pipeline complete.")
+        _step(scan_id, "analyze", "completed", "[MOCK] Analysis complete")
+        _step(scan_id, "execution_start", "completed", "[MOCK] Pipeline complete")
