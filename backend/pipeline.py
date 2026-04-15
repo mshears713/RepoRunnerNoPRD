@@ -25,7 +25,7 @@ import storage
 from codespaces_client import CodespacesClient
 from config import settings
 from fork_preparer import prepare_fork
-from github_client import GitHubClient
+from github_client import GitHubClient, GitHubDiagnosticsError
 from result_analyzer import analyze
 from result_fetcher import fetch_result
 
@@ -47,6 +47,16 @@ def _log(scan_id: str, step: str, status: str, message: str, stream: str = "syst
     """Append a raw log line (no timeline entry) and emit a structured log."""
     storage.append_log(scan_id, step, stream, message)
     logger.info("[%s] [%s] [%s] %s", scan_id, step, status, message)
+
+
+def _github_timeline(
+    scan_id: str,
+    step: str,
+    status: str,
+    message: str,
+    details: dict | None = None,
+) -> None:
+    storage.add_timeline_step(scan_id, step, status, message, details=details)
 
 
 class _PipelineError(RuntimeError):
@@ -132,7 +142,15 @@ class ScanPipeline:
     def _stage_fork(self, scan_id: str, scan: dict) -> None:
         _step(scan_id, "fork", "started", f"Forking {scan['repo_owner']}/{scan['repo_name']}")
         try:
-            fork_name = self._github.fork_repo(scan["repo_owner"], scan["repo_name"])
+            _github_timeline(scan_id, "github_init", "completed", "GitHub client initialized")
+            _github_timeline(scan_id, "github_auth", "completed", "GitHub authentication verified")
+            _github_timeline(
+                scan_id,
+                "fork_start",
+                "started",
+                f"Starting fork for {scan['repo_owner']}/{scan['repo_name']}",
+            )
+            fork_name = self._github.fork_repo(scan["repo_owner"], scan["repo_name"], scan_id=scan_id)
             _log(scan_id, "fork", "in_progress", f"Fork created: {fork_name}")
 
             ready = self._github.wait_for_fork(fork_name)
@@ -143,7 +161,18 @@ class ScanPipeline:
             prepare_fork(self._github, fork_name, scan["repo_name"])
 
             storage.update_scan(scan_id, fork_repo_name=fork_name)
+            _github_timeline(scan_id, "fork_complete", "completed", f"Fork ready: {fork_name}")
             _step(scan_id, "fork", "completed", f"Fork ready: {fork_name}")
+        except GitHubDiagnosticsError as exc:
+            _github_timeline(scan_id, "fork_failed", "failed", exc.reason, details=exc.details)
+            _step(scan_id, "fork", "failed", f"Fork stage: {exc.reason}")
+            storage.update_scan(
+                scan_id,
+                status="failed",
+                error=f"Fork failed: {exc.reason}",
+                failure=exc.to_failure(),
+            )
+            raise _PipelineError(f"Fork failed: {exc.reason}") from exc
         except Exception as exc:
             import traceback
 

@@ -61,6 +61,16 @@ async def _run_pipeline(scan_id: str) -> None:
     await asyncio.to_thread(ScanPipeline().run, scan_id)
 
 
+@router.get("/debug/github")
+async def debug_github() -> dict:
+    from github_client import GitHubClient, GitHubDiagnosticsError
+
+    try:
+        return GitHubClient().get_debug_status()
+    except GitHubDiagnosticsError as exc:
+        raise HTTPException(status_code=500, detail=exc.to_failure()) from exc
+
+
 # ------------------------------------------------------------------
 # POST /api/scan
 # ------------------------------------------------------------------
