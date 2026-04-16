@@ -19,7 +19,7 @@ Mock mode (SCANNER_MOCK_MODE=full): all external calls are bypassed with fixture
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import storage
 from codespaces_client import CodespacesClient
@@ -275,7 +275,7 @@ class ScanPipeline:
             storage.append_log(scan_id, "execute", "stderr", line)
 
     # ------------------------------------------------------------------
-    # Stage 4: Analyze + cleanup
+    # Stage 4: Analyze + schedule cleanup
     # ------------------------------------------------------------------
 
     def _stage_analyze(self, scan_id: str, scan: dict) -> None:
@@ -301,29 +301,35 @@ class ScanPipeline:
             storage.update_scan(scan_id, status="completed", analysis=None)
             _step(scan_id, "analyze", "failed", f"Analysis skipped: {exc}")
         finally:
-            self._cleanup(scan_id)
+            self._schedule_cleanup(scan_id)
 
     # ------------------------------------------------------------------
-    # Cleanup
+    # Cleanup scheduling
     # ------------------------------------------------------------------
 
-    def _cleanup(self, scan_id: str) -> None:
+    def _schedule_cleanup(self, scan_id: str) -> None:
         scan = storage.get_scan(scan_id)
         if not scan:
             return
 
-        cs_name = scan.get("codespace_name")
-        fork_name = scan.get("fork_repo_name")
-
-        if cs_name and not scan.get("cleanup", {}).get("codespace_deleted"):
-            _log(scan_id, "cleanup", "in_progress", f"Deleting Codespace {cs_name}")
-            deleted = self._codespaces.delete_codespace(cs_name)
-            storage.update_scan(scan_id, **{"cleanup.codespace_deleted": deleted})
-
-        if fork_name and not scan.get("cleanup", {}).get("fork_deleted"):
-            _log(scan_id, "cleanup", "in_progress", f"Deleting fork {fork_name}")
-            deleted = self._github.delete_fork(fork_name)
-            storage.update_scan(scan_id, **{"cleanup.fork_deleted": deleted})
+        ttl_seconds = int(scan.get("ttl_seconds") or settings.default_codespace_ttl_seconds)
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        expires_iso = expires_at.isoformat()
+        storage.update_scan(scan_id, codespace_expires_at=expires_iso, is_active=True)
+        storage.add_timeline_step(
+            scan_id,
+            "codespace_expiration_set",
+            "completed",
+            f"Codespace expires in {ttl_seconds}s",
+            details={"codespace_expires_at": expires_iso},
+        )
+        storage.add_timeline_step(
+            scan_id,
+            "cleanup_scheduled",
+            "completed",
+            "Cleanup will run asynchronously after expiration",
+            details={"codespace_expires_at": expires_iso},
+        )
 
     # ------------------------------------------------------------------
     # Mock mode
@@ -376,7 +382,23 @@ class ScanPipeline:
                 "caveats": [],
             },
             failure=None,
-            **{"cleanup.codespace_deleted": True, "cleanup.fork_deleted": True},
+            codespace_expires_at=(
+                datetime.now(timezone.utc)
+                + timedelta(seconds=settings.default_codespace_ttl_seconds)
+            ).isoformat(),
+            is_active=True,
         )
         _step(scan_id, "analyze", "completed", "[MOCK] Analysis complete")
+        storage.add_timeline_step(
+            scan_id,
+            "codespace_expiration_set",
+            "completed",
+            f"[MOCK] Codespace expires in {settings.default_codespace_ttl_seconds}s",
+        )
+        storage.add_timeline_step(
+            scan_id,
+            "cleanup_scheduled",
+            "completed",
+            "[MOCK] Cleanup will run asynchronously after expiration",
+        )
         _step(scan_id, "execution_start", "completed", "[MOCK] Pipeline complete")

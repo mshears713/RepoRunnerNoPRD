@@ -20,6 +20,8 @@ token = os.getenv("GITHUB_TOKEN")
 if not token:
     raise RuntimeError(f"GITHUB_TOKEN not loaded. Expected at: {env_path}")
 
+DEFAULT_CODESPACE_TTL_SECONDS = 300  # 5 minutes
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
@@ -33,6 +35,7 @@ class Settings(BaseSettings):
     fork_poll_timeout: int = 120
     codespace_ready_timeout: int = 300
     execution_timeout: int = 180
+    default_codespace_ttl_seconds: int = DEFAULT_CODESPACE_TTL_SECONDS
 
     # Mocking
     scanner_mock_mode: str = "off"  # "full" | "no_codespace" | "off"

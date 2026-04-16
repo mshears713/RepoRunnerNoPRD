@@ -1,10 +1,13 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import storage
+from cleanup import cleanup_scan_resources
 from routes.scan import router as scan_router
 
 logger = logging.getLogger(__name__)
@@ -34,17 +37,22 @@ app.include_router(scan_router, prefix="/api")
 async def _cleanup_loop() -> None:
     while True:
         try:
-            import storage
-            from codespaces_client import CodespacesClient
-            stale = storage.find_scans_for_cleanup(older_than_seconds=3600)
-            if stale:
-                cs_client = CodespacesClient()
-                for scan in stale:
-                    cs_name = scan.get("codespace_name")
-                    if cs_name:
-                        deleted = cs_client.delete_codespace(cs_name)
-                        storage.update_scan(scan["id"], **{"cleanup.codespace_deleted": deleted})
-                        logger.info("Cleanup: codespace %s deleted=%s", cs_name, deleted)
+            now = datetime.now(timezone.utc)
+            for scan in storage.list_scans(limit=1000):
+                if scan.get("status") not in ("completed", "failed"):
+                    continue
+                if not scan.get("is_active"):
+                    continue
+                expires_at = scan.get("codespace_expires_at")
+                if not expires_at:
+                    continue
+                try:
+                    expires_ts = datetime.fromisoformat(expires_at)
+                except ValueError:
+                    continue
+                if now > expires_ts:
+                    result = cleanup_scan_resources(scan["id"], reason="ttl_expired")
+                    logger.info("Cleanup: scan=%s result=%s", scan["id"], result)
         except Exception:
             logger.exception("Error in cleanup loop")
         await asyncio.sleep(1800)  # run every 30 minutes

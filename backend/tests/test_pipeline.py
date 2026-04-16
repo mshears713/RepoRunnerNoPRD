@@ -140,7 +140,7 @@ def test_mock_pipeline_sets_preview_url():
     assert scan.get("preview_url") is not None
 
 
-def test_mock_pipeline_marks_cleanup():
+def test_mock_pipeline_schedules_cleanup():
     import storage
     from pipeline import ScanPipeline
 
@@ -148,9 +148,8 @@ def test_mock_pipeline_marks_cleanup():
     ScanPipeline().run("scan-006")
 
     scan = storage.get_scan("scan-006")
-    cleanup = scan.get("cleanup", {})
-    assert cleanup.get("codespace_deleted") is True
-    assert cleanup.get("fork_deleted") is True
+    assert scan.get("codespace_expires_at") is not None
+    assert scan.get("is_active") is True
 
 
 def test_pipeline_handles_missing_scan_gracefully():

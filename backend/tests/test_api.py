@@ -46,6 +46,10 @@ def test_submit_scan_minimal(client):
     assert "id" in data
     assert data["status"] == "queued"
 
+    scan = client.get(f"/api/scan/{data['id']}").json()
+    assert "codespace_expires_at" in scan
+    assert "is_active" in scan
+
 
 def test_submit_scan_enriched(client):
     resp = client.post(
@@ -137,3 +141,52 @@ def test_dedup_same_repo_within_24h(client):
 
     resp2 = client.post("/api/scan", json={"repo_url": url})
     assert resp2.status_code == 409
+
+
+def test_rerun_scan_creates_new_scan(client):
+    first = client.post("/api/scan", json={"repo_url": "https://github.com/repeat/repo"})
+    source_id = first.json()["id"]
+
+    rerun = client.post(f"/api/scan/{source_id}/rerun", json={"ttl_seconds": 600})
+    assert rerun.status_code == 201
+    rerun_id = rerun.json()["id"]
+    assert rerun_id != source_id
+
+    rerun_scan = client.get(f"/api/scan/{rerun_id}").json()
+    assert rerun_scan["ttl_seconds"] == 600
+    steps = [x["step"] for x in rerun_scan["timeline"]]
+    assert "rerun_started" in steps
+    assert "rerun_completed" in steps
+
+
+def test_extend_scan_runtime(client):
+    created = client.post("/api/scan", json={"repo_url": "https://github.com/extend/repo"})
+    scan_id = created.json()["id"]
+
+    import storage
+
+    storage.update_scan(scan_id, codespace_expires_at="2026-01-01T00:00:00+00:00")
+    resp = client.post(f"/api/scan/{scan_id}/extend", json={"ttl_seconds": 300})
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is True
+    assert resp.json()["codespace_expires_at"] == "2026-01-01T00:05:00+00:00"
+
+
+def test_manual_cleanup_endpoint(client):
+    created = client.post("/api/scan", json={"repo_url": "https://github.com/cleanup/repo"})
+    scan_id = created.json()["id"]
+
+    import storage
+
+    storage.update_scan(
+        scan_id,
+        status="completed",
+        codespace_name=None,
+        fork_repo_name=None,
+        is_active=True,
+    )
+    resp = client.delete(f"/api/scan/{scan_id}/cleanup")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cleanup"]["codespace_deleted"] is False
+    assert body["cleanup"]["fork_deleted"] is False
