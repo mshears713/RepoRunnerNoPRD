@@ -161,18 +161,15 @@ class ScanPipeline:
             if not ready:
                 raise RuntimeError("Fork did not become ready within timeout")
 
-            _step(scan_id, "inject_execution_files", "started", "Injecting execution files into fork")
-            commit_info = prepare_fork(self._github, fork_name)
-            files = ", ".join(commit_info["files"])
-            _log(scan_id, "fork", "in_progress", f"Files created/updated: {files}")
             _step(
                 scan_id,
                 "inject_execution_files",
-                "completed",
-                "Execution files injected into fork",
+                "started",
+                "Injecting and committing execution files into fork",
             )
-
-            _step(scan_id, "commit_execution_files", "started", "Committing execution files")
+            commit_info = prepare_fork(self._github, fork_name)
+            files = ", ".join(commit_info["files"])
+            _log(scan_id, "fork", "in_progress", f"Files created/updated: {files}")
             _log(
                 scan_id,
                 "fork",
@@ -184,10 +181,10 @@ class ScanPipeline:
             )
             _step(
                 scan_id,
-                "commit_execution_files",
+                "inject_execution_files",
                 "completed",
                 (
-                    "Execution files committed "
+                    "Execution files injected and committed "
                     f"(repo={commit_info['repo']}, branch={commit_info['branch']})"
                 ),
             )
@@ -373,9 +370,12 @@ class ScanPipeline:
         time.sleep(0.05)
         fork_name = f"mock-owner/{repo_name}"
         _step(scan_id, "inject_execution_files", "started", "[MOCK] Injecting execution files")
-        _step(scan_id, "inject_execution_files", "completed", "[MOCK] Execution files injected")
-        _step(scan_id, "commit_execution_files", "started", "[MOCK] Committing execution files")
-        _step(scan_id, "commit_execution_files", "completed", "[MOCK] Execution files committed")
+        _step(
+            scan_id,
+            "inject_execution_files",
+            "completed",
+            "[MOCK] Execution files injected and committed",
+        )
         storage.update_scan(scan_id, fork_repo_name=fork_name)
         _step(scan_id, "fork", "completed", f"[MOCK] Fork ready: {fork_name}")
 
