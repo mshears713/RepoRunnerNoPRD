@@ -21,4 +21,5 @@ def test_prepare_fork_injects_required_files():
     assert 'bash run.sh' in kwargs["files"][".devcontainer/devcontainer.json"]
     assert "set -euo pipefail" in kwargs["files"]["run.sh"]
     assert "scanner_result.json" in kwargs["files"]["run.sh"]
+    assert "grep -oE '[0-9]{4,5}'" in kwargs["files"]["run.sh"]
     assert result["branch"] == "main"

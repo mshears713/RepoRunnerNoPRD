@@ -8,6 +8,7 @@ OUT_LOG="/tmp/scanner_stdout.log"
 ERR_LOG="/tmp/scanner_stderr.log"
 PORT=""
 STAGE_REACHED="cloned"
+DETECTED_PORT=""
 
 log() {
   echo "[scanner] $*"
@@ -75,15 +76,27 @@ wait_for_port() {
 }
 
 start_server() {
-  local port="$1"
+  local expected_port="$1"
   shift
   rm -f "$OUT_LOG" "$ERR_LOG"
   "$@" >"$OUT_LOG" 2>"$ERR_LOG" &
   local pid=$!
-  if wait_for_port "$port"; then
+  if wait_for_port "$expected_port"; then
+    DETECTED_PORT="$expected_port"
     echo "$pid"
     return 0
   fi
+
+  local stdout_tail
+  stdout_tail="$(tail_file "$OUT_LOG")"
+  local parsed_port
+  parsed_port="$(echo "$stdout_tail" | grep -oE '[0-9]{4,5}' | head -1 || true)"
+  if [ -n "$parsed_port" ] && wait_for_port "$parsed_port"; then
+    DETECTED_PORT="$parsed_port"
+    echo "$pid"
+    return 0
+  fi
+
   kill "$pid" >/dev/null 2>&1 || true
   return 1
 }
@@ -99,7 +112,7 @@ main() {
     PORT=3000
     if start_server "$PORT" npm start >/dev/null; then
       STAGE_REACHED="started"
-      write_result "$STAGE_REACHED" 0 "$PORT"
+      write_result "$STAGE_REACHED" 0 "$DETECTED_PORT"
       push_result
       return 0
     fi
@@ -118,14 +131,14 @@ main() {
   if [ -f "main.py" ]; then
     if start_server "$PORT" python3 main.py >/dev/null; then
       STAGE_REACHED="started"
-      write_result "$STAGE_REACHED" 0 "$PORT"
+      write_result "$STAGE_REACHED" 0 "$DETECTED_PORT"
       push_result
       return 0
     fi
   elif [ -f "app.py" ]; then
     if start_server "$PORT" python3 app.py >/dev/null; then
       STAGE_REACHED="started"
-      write_result "$STAGE_REACHED" 0 "$PORT"
+      write_result "$STAGE_REACHED" 0 "$DETECTED_PORT"
       push_result
       return 0
     fi
