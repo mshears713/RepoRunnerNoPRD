@@ -120,9 +120,11 @@ def test_commit_files_to_fork_creates_new_file(mock_gh_class):
     mock_gh_class.return_value.get_repo.return_value = mock_fork
 
     client = GitHubClient(token="ghp_fake_token", fork_owner="bot")
-    client.commit_files_to_fork("bot/repo", {"scanner/run.sh": "#!/bin/bash\necho hi"})
+    result = client.commit_files_to_fork("bot/repo", {"run.sh": "#!/bin/bash\necho hi"})
 
     mock_fork.create_file.assert_called_once()
+    assert result["repo"] == "bot/repo"
+    assert result["branch"] == "main"
 
 
 @patch("github_client.Github")
