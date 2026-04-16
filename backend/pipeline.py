@@ -2,7 +2,7 @@
 ScanPipeline — orchestrates the 4-stage scan process.
 
 Stages:
-  1. FORK          — fork repo + commit devcontainer/run.sh
+  1. FORK          — fork repo + inject/commit devcontainer + run.sh
   2. CODESPACE     — create Codespace and wait for it to be ready
   3. EXECUTE       — wait for run.sh to finish and collect result
   4. ANALYZE       — Gemini summary + failure diagnosis; cleanup
@@ -161,8 +161,36 @@ class ScanPipeline:
             if not ready:
                 raise RuntimeError("Fork did not become ready within timeout")
 
-            _log(scan_id, "fork", "in_progress", "Committing devcontainer and run.sh")
-            prepare_fork(self._github, fork_name, scan["repo_name"])
+            _step(scan_id, "inject_execution_files", "started", "Injecting execution files into fork")
+            commit_info = prepare_fork(self._github, fork_name)
+            files = ", ".join(commit_info["files"])
+            _log(scan_id, "fork", "in_progress", f"Files created/updated: {files}")
+            _step(
+                scan_id,
+                "inject_execution_files",
+                "completed",
+                "Execution files injected into fork",
+            )
+
+            _step(scan_id, "commit_execution_files", "started", "Committing execution files")
+            _log(
+                scan_id,
+                "fork",
+                "in_progress",
+                (
+                    "Commit success "
+                    f"(repo={commit_info['repo']}, branch={commit_info['branch']})"
+                ),
+            )
+            _step(
+                scan_id,
+                "commit_execution_files",
+                "completed",
+                (
+                    "Execution files committed "
+                    f"(repo={commit_info['repo']}, branch={commit_info['branch']})"
+                ),
+            )
 
             storage.update_scan(scan_id, fork_repo_name=fork_name)
             _github_timeline(scan_id, "fork_complete", "completed", f"Fork ready: {fork_name}")
@@ -344,6 +372,10 @@ class ScanPipeline:
         _step(scan_id, "fork", "started", "[MOCK] Forking repo")
         time.sleep(0.05)
         fork_name = f"mock-owner/{repo_name}"
+        _step(scan_id, "inject_execution_files", "started", "[MOCK] Injecting execution files")
+        _step(scan_id, "inject_execution_files", "completed", "[MOCK] Execution files injected")
+        _step(scan_id, "commit_execution_files", "started", "[MOCK] Committing execution files")
+        _step(scan_id, "commit_execution_files", "completed", "[MOCK] Execution files committed")
         storage.update_scan(scan_id, fork_repo_name=fork_name)
         _step(scan_id, "fork", "completed", f"[MOCK] Fork ready: {fork_name}")
 
