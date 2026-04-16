@@ -79,6 +79,7 @@ def test_mock_pipeline_sets_timeline():
     # Timeline is a list of step objects
     assert isinstance(scan.get("timeline"), list)
     assert _has_step(scan, "fork", "completed")
+    assert _has_step(scan, "inject_execution_files", "completed")
     assert _has_step(scan, "codespace_create", "completed")
     assert _has_step(scan, "execute", "completed")
     assert _has_step(scan, "analyze", "completed")

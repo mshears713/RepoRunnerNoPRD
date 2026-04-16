@@ -260,7 +260,7 @@ class GitHubClient:
 
     def commit_files_to_fork(
         self, fork_full_name: str, files: dict[str, str], message: str = "Add scanner devcontainer"
-    ) -> None:
+    ) -> dict:
         """
         Commit one or more files to the fork's default branch.
         files: { "path/in/repo": "file content as string" }
@@ -285,6 +285,7 @@ class GitHubClient:
                     content=content,
                     branch=branch,
                 )
+        return {"repo": fork_full_name, "branch": branch, "files": list(files.keys())}
 
     def get_file_from_fork(self, fork_full_name: str, file_path: str) -> str | None:
         """
