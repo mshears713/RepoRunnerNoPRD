@@ -278,19 +278,52 @@ class ScanPipeline:
                 "duration_sec": 0,
             }
 
-        # Capture preview URL if app started
+        # Determine if this is a server-based execution and generate preview URL
+        stage_reached = execution.get("stage_reached")
+        port = execution.get("port")
+        accessible = False
         preview_url = None
-        if execution.get("stage_reached") == "started" and execution.get("port"):
-            preview_url = self._codespaces.get_forwarded_port_url(cs_name, execution["port"])
+
+        if stage_reached == "started" and port:
+            # Server detected with port
+            accessible = True
+            preview_url = self._codespaces.get_forwarded_port_url(cs_name, port)
+            _log(
+                scan_id, "execute", "completed",
+                f"Port detected: {port} | Preview URL: {preview_url}",
+                stream="system"
+            )
+        elif stage_reached == "completed":
+            # Non-server execution (no port detected but script completed successfully)
+            accessible = False
+            preview_url = None
+            _log(
+                scan_id, "execute", "completed",
+                "No port detected - treating as non-server execution (e.g., CLI tool or script)",
+                stream="system"
+            )
+        else:
+            # Execution failed or incomplete
+            accessible = False
+            preview_url = None
+            _log(
+                scan_id, "execute", "failed",
+                f"Execution incomplete: stage_reached={stage_reached}",
+                stream="system"
+            )
+
+        # Add accessible and preview_url fields to execution result
+        execution["accessible"] = accessible
+        execution["preview_url"] = preview_url
 
         storage.update_scan(scan_id, execution=execution, preview_url=preview_url)
 
-        stage_reached = execution.get("stage_reached")
         exit_code = execution.get("exit_code")
-        exec_status = "completed" if stage_reached == "started" else "failed"
+        # Treat both "started" (server detected) and "completed" (non-server) as success
+        exec_status = "completed" if stage_reached in ("started", "completed") else "failed"
         _step(
             scan_id, "execute", exec_status,
-            f"stage_reached={stage_reached} exit_code={exit_code}",
+            f"stage_reached={stage_reached} port={port} accessible={accessible} exit_code={exit_code}",
         )
 
         # Log stdout/stderr tails
@@ -394,13 +427,15 @@ class ScanPipeline:
             "stderr_tail": "",
             "exit_code": 0,
             "duration_sec": 12.3,
+            "accessible": True,
+            "preview_url": "https://mock-codespace-abc123-8000.app.github.dev",
         }
         storage.update_scan(
             scan_id,
             execution=mock_execution,
             preview_url="https://mock-codespace-abc123-8000.app.github.dev",
         )
-        _step(scan_id, "execute", "completed", "[MOCK] stage_reached=started exit_code=0")
+        _step(scan_id, "execute", "completed", "[MOCK] stage_reached=started port=8000 accessible=True exit_code=0")
 
         _step(scan_id, "analyze", "started", "[MOCK] Running AI analysis")
         time.sleep(0.05)

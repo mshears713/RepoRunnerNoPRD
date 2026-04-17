@@ -83,6 +83,7 @@ start_server() {
   local pid=$!
   if wait_for_port "$expected_port"; then
     DETECTED_PORT="$expected_port"
+    log "Port detection: found on expected port $expected_port (is_server=true)"
     echo "$pid"
     return 0
   fi
@@ -93,10 +94,12 @@ start_server() {
   parsed_port="$(echo "$stdout_tail" | grep -oE '[0-9]{4,5}' | head -1 || true)"
   if [ -n "$parsed_port" ] && wait_for_port "$parsed_port"; then
     DETECTED_PORT="$parsed_port"
+    log "Port detection: found on dynamic port $parsed_port (is_server=true)"
     echo "$pid"
     return 0
   fi
 
+  log "Port detection: no port detected (is_server=false)"
   kill "$pid" >/dev/null 2>&1 || true
   return 1
 }
@@ -110,20 +113,33 @@ main() {
     npm install
     STAGE_REACHED="installed"
     PORT=3000
-    if start_server "$PORT" npm start >/dev/null; then
+    if start_server "$PORT" env HOST=0.0.0.0 npm start >/dev/null; then
       STAGE_REACHED="started"
+      log "Node server started successfully on port $DETECTED_PORT"
       write_result "$STAGE_REACHED" 0 "$DETECTED_PORT"
       push_result
       return 0
     fi
-    write_result "$STAGE_REACHED" 1
+    # Node project found but no server started; treat as non-server repo (success)
+    log "Node project detected but no server port found; treating as non-server execution"
+    STAGE_REACHED="completed"
+    write_result "$STAGE_REACHED" 0
     push_result
+    log "=== RUN END ==="
     return 0
   fi
 
+  # Python project handling
   if [ -f "requirements.txt" ]; then
     log "Detected Python project"
-    pip install -r requirements.txt
+    if ! pip install -r requirements.txt; then
+      log "Python pip install failed"
+      STAGE_REACHED="failed"
+      write_result "$STAGE_REACHED" 1
+      push_result
+      log "=== RUN END ==="
+      return 0
+    fi
     STAGE_REACHED="installed"
   fi
 
@@ -131,19 +147,37 @@ main() {
   if [ -f "main.py" ]; then
     if start_server "$PORT" python3 main.py >/dev/null; then
       STAGE_REACHED="started"
+      log "Python server started successfully on port $DETECTED_PORT"
       write_result "$STAGE_REACHED" 0 "$DETECTED_PORT"
       push_result
       return 0
     fi
+    # main.py found but no server started; treat as non-server script (success)
+    log "main.py detected but no server port found; treating as script execution (non-server)"
+    STAGE_REACHED="completed"
+    write_result "$STAGE_REACHED" 0
+    push_result
+    log "=== RUN END ==="
+    return 0
   elif [ -f "app.py" ]; then
     if start_server "$PORT" python3 app.py >/dev/null; then
       STAGE_REACHED="started"
+      log "Python server started successfully on port $DETECTED_PORT"
       write_result "$STAGE_REACHED" 0 "$DETECTED_PORT"
       push_result
       return 0
     fi
+    # app.py found but no server started; treat as non-server script (success)
+    log "app.py detected but no server port found; treating as script execution (non-server)"
+    STAGE_REACHED="completed"
+    write_result "$STAGE_REACHED" 0
+    push_result
+    log "=== RUN END ==="
+    return 0
   fi
 
+  # No recognized project structure
+  log "No recognized project structure (no package.json, main.py, or app.py)"
   write_result "$STAGE_REACHED" 1
   push_result
   log "=== RUN END ==="
