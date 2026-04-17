@@ -278,16 +278,21 @@ class ScanPipeline:
                 "duration_sec": 0,
             }
 
-        # Capture preview URL if app started
-        preview_url = None
-        if execution.get("stage_reached") == "started" and execution.get("port"):
-            preview_url = self._codespaces.get_forwarded_port_url(cs_name, execution["port"])
+        # Capture externally accessible preview URL from codespace name + port.
+        port = execution.get("port")
+        preview_url = f"https://{cs_name}-{port}.app.github.dev" if cs_name and port else None
+        accessible = bool(preview_url)
 
-        storage.update_scan(scan_id, execution=execution, preview_url=preview_url)
+        storage.update_scan(
+            scan_id,
+            execution=execution,
+            preview_url=preview_url,
+            accessible=accessible,
+        )
 
         stage_reached = execution.get("stage_reached")
         exit_code = execution.get("exit_code")
-        exec_status = "completed" if stage_reached == "started" else "failed"
+        exec_status = "completed" if stage_reached in {"started", "installed"} else "failed"
         _step(
             scan_id, "execute", exec_status,
             f"stage_reached={stage_reached} exit_code={exit_code}",
@@ -399,6 +404,7 @@ class ScanPipeline:
             scan_id,
             execution=mock_execution,
             preview_url="https://mock-codespace-abc123-8000.app.github.dev",
+            accessible=True,
         )
         _step(scan_id, "execute", "completed", "[MOCK] stage_reached=started exit_code=0")
 
