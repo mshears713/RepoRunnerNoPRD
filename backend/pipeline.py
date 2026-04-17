@@ -278,45 +278,59 @@ class ScanPipeline:
                 "duration_sec": 0,
             }
 
-        # Determine if this is a server-based execution and generate preview URL
+        # Determine execution type and preview URL
         stage_reached = execution.get("stage_reached")
         port = execution.get("port")
-        accessible = False
+
         preview_url = None
+        accessible = False
 
         if stage_reached == "started" and port:
-            # Server detected with port
+            # Server execution
+            preview_url = f"https://{cs_name}-{port}.app.github.dev"
             accessible = True
-            preview_url = self._codespaces.get_forwarded_port_url(cs_name, port)
             _log(
-                scan_id, "execute", "completed",
-                f"Port detected: {port} | Preview URL: {preview_url}",
-                stream="system"
-            )
-        elif stage_reached == "completed":
-            # Non-server execution (no port detected but script completed successfully)
-            accessible = False
-            preview_url = None
-            _log(
-                scan_id, "execute", "completed",
-                "No port detected - treating as non-server execution (e.g., CLI tool or script)",
-                stream="system"
-            )
-        else:
-            # Execution failed or incomplete
-            accessible = False
-            preview_url = None
-            _log(
-                scan_id, "execute", "failed",
-                f"Execution incomplete: stage_reached={stage_reached}",
-                stream="system"
+                scan_id,
+                "execute",
+                "completed",
+                f"Server detected on port {port} | Preview URL: {preview_url}",
+                stream="system",
             )
 
-        # Add accessible and preview_url fields to execution result
+        elif stage_reached == "completed":
+            # Non-server execution (CLI / script)
+            accessible = False
+            preview_url = None
+            _log(
+                scan_id,
+                "execute",
+                "completed",
+                "Non-server execution completed successfully (no port detected)",
+                stream="system",
+            )
+
+        else:
+            # Failed or incomplete
+            accessible = False
+            preview_url = None
+            _log(
+                scan_id,
+                "execute",
+                "failed",
+                f"Execution incomplete: stage_reached={stage_reached}",
+                stream="system",
+            )
+
+        # Attach results
         execution["accessible"] = accessible
         execution["preview_url"] = preview_url
 
-        storage.update_scan(scan_id, execution=execution, preview_url=preview_url)
+        storage.update_scan(
+            scan_id,
+            execution=execution,
+            preview_url=preview_url,
+            accessible=accessible,
+        )
 
         exit_code = execution.get("exit_code")
         # Treat both "started" (server detected) and "completed" (non-server) as success
@@ -434,6 +448,7 @@ class ScanPipeline:
             scan_id,
             execution=mock_execution,
             preview_url="https://mock-codespace-abc123-8000.app.github.dev",
+            accessible=True,
         )
         _step(scan_id, "execute", "completed", "[MOCK] stage_reached=started port=8000 accessible=True exit_code=0")
 

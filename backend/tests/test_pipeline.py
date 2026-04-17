@@ -139,6 +139,7 @@ def test_mock_pipeline_sets_preview_url():
 
     scan = storage.get_scan("scan-005")
     assert scan.get("preview_url") is not None
+    assert scan.get("accessible") is True
 
 
 def test_mock_pipeline_schedules_cleanup():

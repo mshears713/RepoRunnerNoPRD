@@ -91,7 +91,15 @@ start_server() {
   local stdout_tail
   stdout_tail="$(tail_file "$OUT_LOG")"
   local parsed_port
-  parsed_port="$(echo "$stdout_tail" | grep -oE '[0-9]{4,5}' | head -1 || true)"
+  parsed_port="$(
+    echo "$stdout_tail" \
+      | grep -iE '(port|listening|running at|http://|https://)' \
+      | grep -oE '[0-9]{4,5}' \
+      | head -1 || true
+  )"
+  if [ -z "$parsed_port" ]; then
+    parsed_port="$(echo "$stdout_tail" | grep -oE '[0-9]{4,5}' | head -1 || true)"
+  fi
   if [ -n "$parsed_port" ] && wait_for_port "$parsed_port"; then
     DETECTED_PORT="$parsed_port"
     log "Port detection: found on dynamic port $parsed_port (is_server=true)"
