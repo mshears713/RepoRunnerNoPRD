@@ -142,6 +142,72 @@ def test_mock_pipeline_sets_preview_url():
     assert scan.get("accessible") is True
 
 
+def test_stage_execute_server_builds_preview_url(monkeypatch):
+    import storage
+    from pipeline import ScanPipeline
+
+    _create_test_scan("scan-009")
+    storage.update_scan(
+        "scan-009",
+        fork_repo_name="bot/testrepo",
+        codespace_name="cs-test-123",
+    )
+
+    def _fake_fetch_result(**kwargs):
+        return {
+            "stage_reached": "started",
+            "port": 5006,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "exit_code": 0,
+            "duration_sec": 3,
+        }
+
+    monkeypatch.setattr("pipeline.fetch_result", _fake_fetch_result)
+
+    scan = storage.get_scan("scan-009")
+    ScanPipeline(github=object(), codespaces=object())._stage_execute("scan-009", scan)
+
+    updated = storage.get_scan("scan-009")
+    assert updated["preview_url"] == "https://cs-test-123-5006.app.github.dev"
+    assert updated["accessible"] is True
+    assert updated["execution"]["preview_url"] == "https://cs-test-123-5006.app.github.dev"
+    assert updated["execution"]["accessible"] is True
+
+
+def test_stage_execute_completed_has_no_preview_url(monkeypatch):
+    import storage
+    from pipeline import ScanPipeline
+
+    _create_test_scan("scan-010")
+    storage.update_scan(
+        "scan-010",
+        fork_repo_name="bot/testrepo",
+        codespace_name="cs-test-456",
+    )
+
+    def _fake_fetch_result(**kwargs):
+        return {
+            "stage_reached": "completed",
+            "port": None,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "exit_code": 0,
+            "duration_sec": 2,
+        }
+
+    monkeypatch.setattr("pipeline.fetch_result", _fake_fetch_result)
+
+    scan = storage.get_scan("scan-010")
+    ScanPipeline(github=object(), codespaces=object())._stage_execute("scan-010", scan)
+
+    updated = storage.get_scan("scan-010")
+    assert updated["preview_url"] is None
+    assert updated["accessible"] is False
+    assert updated["execution"]["preview_url"] is None
+    assert updated["execution"]["accessible"] is False
+
+
 def test_mock_pipeline_schedules_cleanup():
     import storage
     from pipeline import ScanPipeline

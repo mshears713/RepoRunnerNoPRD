@@ -255,6 +255,9 @@ class ScanPipeline:
 
     def _stage_execute(self, scan_id: str, scan: dict) -> None:
         cs_name = scan.get("codespace_name")
+        if not cs_name:
+            refreshed = storage.get_scan(scan_id) or {}
+            cs_name = refreshed.get("codespace_name")
         fork_name = scan.get("fork_repo_name")
 
         _step(scan_id, "execute", "started", "Waiting for run.sh to push results")
@@ -285,7 +288,7 @@ class ScanPipeline:
         preview_url = None
         accessible = False
 
-        if stage_reached == "started" and port:
+        if stage_reached == "started" and port is not None and cs_name:
             # Server execution
             preview_url = f"https://{cs_name}-{port}.app.github.dev"
             accessible = True

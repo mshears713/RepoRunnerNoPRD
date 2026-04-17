@@ -93,6 +93,26 @@ def test_get_scan(client):
     assert data["repo_name"] == "bar"
 
 
+def test_get_scan_includes_preview_url(client):
+    resp = client.post("/api/scan", json={"repo_url": "https://github.com/foo/preview"})
+    scan_id = resp.json()["id"]
+
+    import storage
+
+    storage.update_scan(
+        scan_id,
+        preview_url="https://cs-preview-5006.app.github.dev",
+        accessible=True,
+        execution={"stage_reached": "started", "port": 5006},
+    )
+
+    result = client.get(f"/api/scan/{scan_id}")
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["preview_url"] == "https://cs-preview-5006.app.github.dev"
+    assert payload["accessible"] is True
+
+
 def test_get_scan_not_found(client):
     resp = client.get("/api/scan/nonexistent-id")
     assert resp.status_code == 404
