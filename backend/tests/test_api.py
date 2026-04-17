@@ -49,6 +49,7 @@ def test_submit_scan_minimal(client):
     scan = client.get(f"/api/scan/{data['id']}").json()
     assert "codespace_expires_at" in scan
     assert "is_active" in scan
+    assert scan["accessible"] is False
 
 
 def test_submit_scan_enriched(client):

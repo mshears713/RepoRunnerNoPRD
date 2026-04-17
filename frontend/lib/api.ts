@@ -53,6 +53,7 @@ export interface Scan {
   fork_repo_name?: string;
   codespace_name?: string;
   preview_url?: string;
+  accessible?: boolean;
   timeline: ScanTimeline;
   execution?: ScanExecution;
   analysis?: ScanAnalysis;
